@@ -21,7 +21,7 @@ This patch keeps the editor, sidebar, activity bar, and menus in LTR, and only a
 
 #### 1. Clone or download this repo
 ```bash
-git clone https://github.com/YOUR_USERNAME/zcode-rtl-patch.git
+git clone https://github.com/nimabhk/zcode-rtl-patch.git
 cd zcode-rtl-patch
 ```
 
