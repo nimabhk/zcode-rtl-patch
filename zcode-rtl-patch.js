@@ -6,6 +6,8 @@
  * What it does:
  * - Keeps UI, sidebar, editor LTR
  * - Auto-detects Persian/Arabic text and sets dir="rtl" only for content
+ * - Update-safe: detects ZCode updates and refreshes the backup (never downgrades)
+ * - Idempotent: safe to run multiple times; undo with --restore
  */
 
 const fs = require("fs");
@@ -15,6 +17,37 @@ const { execSync } = require("child_process");
 
 console.log("\n🌟 ZCode Safe Smart RTL Fixer (Cross-Platform)");
 console.log("═══════════════════════════════════════════════════\n");
+
+const PATCH_MARKER = "SAFE SMART RTL FIX";
+
+// Search a large binary file for a marker without loading it all into memory
+function fileContains(filePath, needle) {
+  const fd = fs.openSync(filePath, "r");
+  const chunkSize = 16 * 1024 * 1024;
+  const overlap = Buffer.byteLength(needle) - 1;
+  const chunk = Buffer.alloc(chunkSize + overlap);
+  try {
+    let pos = 0;
+    for (;;) {
+      const bytesRead = fs.readSync(fd, chunk, 0, chunk.length, pos);
+      if (bytesRead === 0) return false;
+      if (chunk.slice(0, bytesRead).includes(needle)) return true;
+      if (bytesRead < chunk.length) return false;
+      pos += bytesRead - overlap;
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+// <Bundle.app>/Contents/Resources/app.asar -> <Bundle.app>
+function appBundlePath(asar) {
+  const bundle = path.resolve(path.dirname(asar), "..", "..");
+  return path.basename(bundle).endsWith(".app") ? bundle : null;
+}
+
+// Minimal shell quoting for execSync string commands
+const shq = (p) => `"${String(p).replace(/"/g, '\\"')}"`;
 
 function findAsarPath() {
   const home = os.homedir();
@@ -66,14 +99,48 @@ const unpackedPath = path.join(os.tmpdir(), `zcode_extracted_${Date.now()}`);
 
 console.log(`✅ Found ZCode at: ${asarPath}`);
 
+// --- Undo: restore the clean backup ---
+if (process.argv.includes("--restore")) {
+  if (!fs.existsSync(backupPath)) {
+    console.error("❌ No backup found. Nothing to restore.");
+    process.exit(1);
+  }
+  if (fileContains(backupPath, PATCH_MARKER)) {
+    console.error("❌ Backup itself contains the patch. Reinstall ZCode to fully restore.");
+    process.exit(1);
+  }
+  console.log("♻️  Restoring original app.asar from backup...");
+  fs.copyFileSync(backupPath, asarPath);
+  if (process.platform === "darwin") {
+    const bundle = appBundlePath(asarPath);
+    if (bundle) {
+      console.log("🔐 Re-signing app bundle...");
+      execSync(`xattr -cr ${shq(bundle)}`, { stdio: "pipe" });
+      execSync(`codesign --sign - --force --deep ${shq(bundle)}`, { stdio: "pipe" });
+    }
+  }
+  console.log("\n✅ Restored. Restart ZCode (macOS may ask for permissions again — that's expected).\n");
+  process.exit(0);
+}
+
 try {
-  // 1. Backup / Restore to avoid double injection
-  if (fs.existsSync(backupPath)) {
-    console.log("📦 Restoring clean backup...");
-    fs.copyFileSync(backupPath, asarPath);
-  } else {
+  // 1. Backup management — never restore an outdated backup over a newer app.asar
+  const backupExists = fs.existsSync(backupPath);
+  const currentPatched = fileContains(asarPath, PATCH_MARKER);
+
+  if (!backupExists) {
     console.log("📦 Creating backup...");
     fs.copyFileSync(asarPath, backupPath);
+  } else if (!currentPatched) {
+    // Current app.asar is clean: either ZCode updated, or the user restored it.
+    // Refreshing the backup from it is always safe and prevents downgrades.
+    console.log("📦 Current app.asar is unpatched — refreshing backup from it (update-safe, no downgrade).");
+    fs.copyFileSync(asarPath, backupPath);
+  } else if (!fileContains(backupPath, PATCH_MARKER)) {
+    console.log("📦 Restoring clean backup (same ZCode version)...");
+    fs.copyFileSync(backupPath, asarPath);
+  } else {
+    console.log("⚠️ Backup also contains the patch — will clean the preload file directly instead.");
   }
 
   // 2. Extract
@@ -83,7 +150,7 @@ try {
   let extracted = false;
   for (let i = 0; i < 10 && !extracted; i++) {
     try {
-      execSync(`npx asar extract "${asarPath}" "${unpackedPath}"`, { stdio: "pipe" });
+      execSync(`npx asar extract ${shq(asarPath)} ${shq(unpackedPath)}`, { stdio: "pipe" });
       extracted = true;
     } catch (err) {
       const stderr = err.stderr?.toString() || "";
@@ -133,12 +200,15 @@ try {
 
   console.log(`   Found: ${preloadPath.replace(unpackedPath, "")}`);
 
-  // Avoid double injection
+  // Idempotent: strip any previous injection, then append fresh code
   let preloadContent = fs.readFileSync(preloadPath, "utf8");
-  if (preloadContent.includes("SAFE SMART RTL FIX")) {
-    console.log("   Already patched, skipping injection.");
-  } else {
-    const safeRtlCode = `
+  const markerIndex = preloadContent.indexOf(`// --- ${PATCH_MARKER}`);
+  if (markerIndex !== -1) {
+    console.log("🧹 Removing previous injection...");
+    preloadContent = preloadContent.slice(0, markerIndex).replace(/\s+$/, "") + "\n";
+    fs.writeFileSync(preloadPath, preloadContent);
+  }
+  const safeRtlCode = `
 // --- SAFE SMART RTL FIX FOR ZCODE (SIDEBAR PROTECTED) ---
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   window.addEventListener('DOMContentLoaded', () => {
@@ -163,30 +233,39 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   });
 }
 `;
-    fs.appendFileSync(preloadPath, safeRtlCode);
-  }
+  fs.appendFileSync(preloadPath, safeRtlCode);
 
   // 4. Repack
   console.log("📦 Repacking...");
-  execSync(`npx asar pack "${unpackedPath}" "${asarPath}"`, { stdio: "pipe" });
+  execSync(`npx asar pack ${shq(unpackedPath)} ${shq(asarPath)}`, { stdio: "pipe" });
 
   // 5. Cleanup
   fs.rmSync(unpackedPath, { recursive: true, force: true });
 
-  // 6. macOS fix: re-sign after patch
+  // 6. macOS fix: re-sign after patch (uses the detected app bundle path)
   if (process.platform === "darwin") {
-    try {
-      console.log("🔐 Fixing macOS signature...");
-      execSync(`xattr -cr "/Applications/ZCode.app"`, { stdio: "pipe" });
-      execSync(`codesign --sign - --force --deep "/Applications/ZCode.app"`, { stdio: "pipe" });
-      console.log("   Signature fixed.");
-    } catch (e) {
-      console.log("   Note: Could not auto-fix signature, run manually:");
+    const bundle = appBundlePath(asarPath);
+    if (!bundle) {
+      console.log("   Note: Could not detect app bundle path, re-sign manually:");
       console.log('   sudo xattr -cr /Applications/ZCode.app && sudo codesign --sign - --force --deep /Applications/ZCode.app');
+    } else {
+      try {
+        console.log("🔐 Fixing macOS signature...");
+        execSync(`xattr -cr ${shq(bundle)}`, { stdio: "pipe" });
+        execSync(`codesign --sign - --force --deep ${shq(bundle)}`, { stdio: "pipe" });
+        console.log("   Signature fixed.");
+      } catch (e) {
+        console.log("   Note: Could not auto-fix signature, run manually:");
+        console.log(`   sudo xattr -cr ${bundle} && sudo codesign --sign - --force --deep ${bundle}`);
+      }
     }
   }
 
-  console.log("\n✅ Success! ZCode is patched. Restart ZCode to see RTL support.\n");
+  console.log("\n✅ Success! ZCode is patched. Restart ZCode to see RTL support.");
+  console.log("\nℹ️  Expected after patching (macOS):");
+  console.log("   • macOS will ask again for previously granted permissions (the app signature changed).");
+  console.log("   • Little Snitch / firewall tools will show an 'application modified' warning and re-ask old rules.");
+  console.log("   • After every ZCode update, just run this script again — it is update-safe (no downgrade).\n");
 
 } catch (error) {
   console.error("\n❌ Error:", error.message);

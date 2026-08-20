@@ -8,9 +8,10 @@ This patch keeps the editor, sidebar, activity bar, and menus in LTR, and only a
 
 - **Sidebar Protected**: Editor, sidebar, menus, activity bar stay LTR
 - **Smart Detection**: Only elements containing `[\u0600-\u06FF]` become RTL
-- **Safe**: Creates automatic backup `app.asar.backup`
+- **Safe**: Creates automatic backup `app.asar.backup` — undo anytime with `--restore`
+- **Update-Safe**: Detects ZCode updates and refreshes the backup — never downgrades your app
 - **Cross-Platform**: Works on macOS, Windows, and Linux
-- **Clean Restore**: Restores clean backup before re-patching to avoid double injection
+- **Easy Launchers**: One double-click file for macOS and one for Windows
 
 ### 📋 Prerequisites
 
@@ -29,6 +30,12 @@ cd zcode-rtl-patch
 Make sure ZCode is not running (Quit from Dock / Task Manager).
 
 #### 3. Run the patch
+
+**Easy way — double-click:**
+- **macOS**: double-click `patch-mac.command` (checks Node, detects a running ZCode, offers a sudo retry if needed)
+- **Windows**: double-click `patch-windows.bat` (accept the administrator prompt)
+
+**Or from the terminal:**
 
 **On macOS:**
 ```bash
@@ -76,7 +83,12 @@ The script:
 
 ### ♻️ Uninstall / Restore
 
-**Automatic restore:**
+**Automatic restore (recommended):**
+```bash
+node zcode-rtl-patch.js --restore
+```
+
+**Manual restore:**
 ```bash
 # Windows
 copy "%LOCALAPPDATA%\Programs\ZCode\resources\app.asar.backup" "%LOCALAPPDATA%\Programs\ZCode\resources\app.asar"
@@ -94,7 +106,13 @@ Or simply reinstall ZCode.
 
 ### ⚠️ Notes
 
-- You need to re-run the patch after every ZCode update (updates overwrite `app.asar`).
+- **Security reviewed**: the injected code only adjusts text direction in the DOM — no network calls, no data collection.
+- **macOS permissions reset is expected**: patching re-signs the app, so macOS treats it as a new app and asks again for previously granted permissions. If you use **Little Snitch**, all old rules are re-asked with an *"application modified"* warning — this is caused by the patch, not by malware.
+- Re-run the patch after every ZCode update (updates overwrite `app.asar`). It's update-safe: it detects updates and refreshes the backup instead of restoring the old one.
+- **No-patch alternative**: test Chromium's native RTL flags (mirrors the *entire* UI, no modification, no re-signing):
+  ```bash
+  /Applications/ZCode.app/Contents/MacOS/ZCode --force-ui-direction=rtl --force-text-direction=rtl
+  ```
 - The patch does not modify your documents, only the app's UI logic.
 - If ZCode doesn't start after patching on macOS, run:
   ```bash
@@ -110,6 +128,19 @@ Or simply reinstall ZCode.
 | `EACCES / EPERM` | Run with `sudo` (macOS/Linux) or Admin PowerShell (Windows) |
 | `ERR_INVALID_ARG_TYPE` with `LOCALAPPDATA` | You are using old Windows-only version, use `zcode-rtl-patch.js` (this repo) |
 | ZCode not opening on Mac | Run the two `xattr` + `codesign` commands above |
+
+### 📜 Changelog
+
+**v1.1.0 — 2026-08-20**
+- Update-safe backup handling: running the patch after a ZCode update refreshes the backup instead of restoring the old one (fixes silent downgrade)
+- Idempotent injection: any previous patch is removed before re-injecting
+- One-command undo: `node zcode-rtl-patch.js --restore`
+- Double-click launchers: `patch-mac.command` and `patch-windows.bat`
+- Re-signing now uses the detected app path instead of hardcoded `/Applications/ZCode.app`
+- Console notes about expected macOS permission prompts (incl. Little Snitch)
+
+**v1.0.0**
+- Initial release: smart content-only RTL, sidebar protection, automatic backup
 
 ### 📄 License
 
