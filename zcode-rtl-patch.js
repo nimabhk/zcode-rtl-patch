@@ -8,12 +8,15 @@
  * - Auto-detects Persian/Arabic text and sets dir="rtl" only for content
  * - Update-safe: detects ZCode updates and refreshes the backup (never downgrades)
  * - Idempotent: safe to run multiple times; undo with --restore
+ * - Smart bidi: per-paragraph majority direction (mixed EN/FA sentences stay readable),
+ *   plaintext textareas (fixes input caret jumps and first-line direction)
+ * - Optional Vazirmatn font embedding (--no-font to skip)
  */
 
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { execSync } = require("child_process");
+const { execFileSync } = require("child_process");
 
 console.log("\n🌟 ZCode Safe Smart RTL Fixer (Cross-Platform)");
 console.log("═══════════════════════════════════════════════════\n");
@@ -42,12 +45,19 @@ function fileContains(filePath, needle) {
 
 // <Bundle.app>/Contents/Resources/app.asar -> <Bundle.app>
 function appBundlePath(asar) {
-  const bundle = path.resolve(path.dirname(asar), "..", "..");
+  const bundle = path.dirname(path.dirname(path.dirname(asar)));
   return path.basename(bundle).endsWith(".app") ? bundle : null;
 }
 
-// Minimal shell quoting for execSync string commands
-const shq = (p) => `"${String(p).replace(/"/g, '\\"')}"`;
+// External tools are invoked with literal command names and argument arrays —
+// never through a shell string, so paths cannot turn into shell syntax.
+function reSignBundle(bundle) {
+  execFileSync("xattr", ["-cr", bundle], { stdio: "pipe" });
+  execFileSync("codesign", ["--sign", "-", "--force", "--deep", bundle], { stdio: "pipe" });
+}
+
+const PATCH_VERSION = "1.2.0";
+const { getVazirmatnFont } = require("./vazirmatn-font");
 
 function findAsarPath() {
   const home = os.homedir();
@@ -72,9 +82,10 @@ function findAsarPath() {
     );
   }
 
-  // Manual path from CLI arg
-  if (process.argv[2] && fs.existsSync(process.argv[2])) {
-    return process.argv[2];
+  // Manual path from CLI arg (skip flags like --restore / --no-font)
+  const manualArg = process.argv.slice(2).find((a) => !a.startsWith("--"));
+  if (manualArg && path.basename(manualArg) === "app.asar" && fs.existsSync(manualArg)) {
+    return manualArg;
   }
 
   for (const p of candidates) {
@@ -115,15 +126,18 @@ if (process.argv.includes("--restore")) {
     const bundle = appBundlePath(asarPath);
     if (bundle) {
       console.log("🔐 Re-signing app bundle...");
-      execSync(`xattr -cr ${shq(bundle)}`, { stdio: "pipe" });
-      execSync(`codesign --sign - --force --deep ${shq(bundle)}`, { stdio: "pipe" });
+      reSignBundle(bundle);
     }
   }
   console.log("\n✅ Restored. Restart ZCode (macOS may ask for permissions again — that's expected).\n");
   process.exit(0);
 }
 
+async function main() {
 try {
+  // 0. Optional Vazirmatn font (embedded as base64 into the injected CSS)
+  const fontData = await getVazirmatnFont(process.argv.includes("--no-font"));
+
   // 1. Backup management — never restore an outdated backup over a newer app.asar
   const backupExists = fs.existsSync(backupPath);
   const currentPatched = fileContains(asarPath, PATCH_MARKER);
@@ -150,7 +164,7 @@ try {
   let extracted = false;
   for (let i = 0; i < 10 && !extracted; i++) {
     try {
-      execSync(`npx asar extract ${shq(asarPath)} ${shq(unpackedPath)}`, { stdio: "pipe" });
+      execFileSync("npx", ["asar", "extract", asarPath, unpackedPath], { stdio: "pipe" });
       extracted = true;
     } catch (err) {
       const stderr = err.stderr?.toString() || "";
@@ -161,7 +175,7 @@ try {
       } else {
         if (i === 0) {
           console.log("   Installing asar...");
-          execSync("npm install -g asar", { stdio: "inherit" });
+          execFileSync("npm", ["install", "-g", "asar"], { stdio: "inherit" });
         }
       }
     }
@@ -208,36 +222,58 @@ try {
     preloadContent = preloadContent.slice(0, markerIndex).replace(/\s+$/, "") + "\n";
     fs.writeFileSync(preloadPath, preloadContent);
   }
+  const fontFaces = fontData
+    ? `@font-face{font-family:'Vazirmatn';font-style:normal;font-weight:400;src:local('Vazirmatn'),url(data:font/woff2;base64,${fontData.regular}) format('woff2');} @font-face{font-family:'Vazirmatn';font-style:normal;font-weight:700;src:local('Vazirmatn'),url(data:font/woff2;base64,${fontData.bold}) format('woff2');} `
+    : "";
+
   const safeRtlCode = `
-// --- SAFE SMART RTL FIX FOR ZCODE (SIDEBAR PROTECTED) ---
+// --- SAFE SMART RTL FIX FOR ZCODE (SIDEBAR PROTECTED) v${PATCH_VERSION} ---
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {
-  window.addEventListener('DOMContentLoaded', () => {
-    const style = document.createElement('style');
-    style.id = 'zcode-rtl-fix';
+  const applyRtl = () => {
     if (!document.getElementById('zcode-rtl-fix')) {
-      style.innerHTML = "body, html { direction: ltr !important; } pre, code, pre *, code *, .editor-instance *, [class*='editor'], aside *, nav *, [class*='sidebar' i] *, [class*='activitybar' i] *, [class*='menu' i] * { direction: ltr !important; text-align: left !important; unicode-bidi: normal !important; } p, h1, h2, h3, h4, h5, h6, span { unicode-bidi: plaintext !important; text-align: start !important; } ol[dir='rtl'], ul[dir='rtl'] { direction: rtl !important; padding-right: 40px !important; padding-left: 0 !important; margin-right: 10px !important; } ol[dir='rtl'] li, ul[dir='rtl'] li { direction: rtl !important; text-align: right !important; } table[dir='rtl'] { direction: rtl !important; text-align: right !important; }";
+      const style = document.createElement('style');
+      style.id = 'zcode-rtl-fix';
+      style.innerHTML = "${fontFaces}body, html { direction: ltr !important; } pre, code, pre *, code *, .editor-instance *, [class*='editor'], aside *, nav *, [class*='sidebar' i] *, [class*='activitybar' i] *, [class*='menu' i] * { direction: ltr !important; text-align: left !important; unicode-bidi: normal !important; } textarea, input { unicode-bidi: plaintext !important; } p, h1, h2, h3, h4, h5, h6, li, blockquote, dd, dt, figcaption, td, th { text-align: start !important; } ol[dir='rtl'], ul[dir='rtl'] { direction: rtl !important; padding-right: 40px !important; padding-left: 0 !important; margin-right: 10px !important; } ol[dir='rtl'] li, ul[dir='rtl'] li { direction: rtl !important; text-align: right !important; } table[dir='rtl'] { direction: rtl !important; text-align: right !important; } p, h1, h2, h3, h4, h5, h6, li, blockquote, dd, dt, figcaption, td, th, textarea, input { font-family: 'Vazirmatn', 'Vazir', -apple-system, 'Segoe UI', sans-serif !important; }";
       document.head.appendChild(style);
     }
+    const RTL_CHARS = /[\\u0600-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF]/g;
+    const LTR_CHARS = /[A-Za-z]/g;
+    document.querySelectorAll('p, li, blockquote, dd, dt, figcaption, td, th, h1, h2, h3, h4, h5, h6, ul, ol, table').forEach(el => {
+      if (el.closest('pre') || el.closest('code') || el.closest('[class*="editor"]') || el.closest('aside') || el.closest('nav') || el.closest('[class*="sidebar" i]') || el.closest('[class*="menu" i]')) return;
+      const text = el.textContent || '';
+      const rtlCount = (text.match(RTL_CHARS) || []).length;
+      const ltrCount = (text.match(LTR_CHARS) || []).length;
+      // Majority rule: a paragraph follows its dominant script, so
+      // "Claude Code این قابلیت را دارد" stays RTL and "use این tool" stays LTR.
+      if (rtlCount > ltrCount) {
+        if (el.getAttribute('dir') !== 'rtl') el.setAttribute('dir', 'rtl');
+      } else if (el.getAttribute('dir') === 'rtl') {
+        el.removeAttribute('dir');
+      }
+    });
+  };
+  const startRtl = () => {
+    applyRtl();
+    let scheduled = false;
     const observer = new MutationObserver(() => {
-      document.querySelectorAll('ul, ol, p, table, span, li, h1, h2, h3').forEach(el => {
-        if (el.closest('pre') || el.closest('code') || el.closest('[class*="editor"]') || el.closest('aside') || el.closest('nav') || el.closest('[class*="sidebar" i]') || el.closest('[class*="menu" i]')) return;
-        const hasRTL = /[\\u0600-\\u06FF]/.test(el.textContent);
-        if (hasRTL && el.getAttribute('dir') !== 'rtl') {
-          el.setAttribute('dir', 'rtl');
-        } else if (!hasRTL && el.getAttribute('dir') === 'rtl') {
-          el.removeAttribute('dir');
-        }
-      });
+      if (scheduled) return;
+      scheduled = true;
+      setTimeout(() => { scheduled = false; applyRtl(); }, 150);
     });
     observer.observe(document.body, { childList: true, subtree: true });
-  });
+  };
+  if (document.readyState === 'loading') {
+    window.addEventListener('DOMContentLoaded', startRtl);
+  } else {
+    startRtl();
+  }
 }
 `;
   fs.appendFileSync(preloadPath, safeRtlCode);
 
   // 4. Repack
   console.log("📦 Repacking...");
-  execSync(`npx asar pack ${shq(unpackedPath)} ${shq(asarPath)}`, { stdio: "pipe" });
+  execFileSync("npx", ["asar", "pack", unpackedPath, asarPath], { stdio: "pipe" });
 
   // 5. Cleanup
   fs.rmSync(unpackedPath, { recursive: true, force: true });
@@ -251,8 +287,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     } else {
       try {
         console.log("🔐 Fixing macOS signature...");
-        execSync(`xattr -cr ${shq(bundle)}`, { stdio: "pipe" });
-        execSync(`codesign --sign - --force --deep ${shq(bundle)}`, { stdio: "pipe" });
+        reSignBundle(bundle);
         console.log("   Signature fixed.");
       } catch (e) {
         console.log("   Note: Could not auto-fix signature, run manually:");
@@ -261,7 +296,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
   }
 
-  console.log("\n✅ Success! ZCode is patched. Restart ZCode to see RTL support.");
+  console.log(`\n✅ Success! ZCode is patched (v${PATCH_VERSION}). Restart ZCode to see RTL support.`);
+  if (fontData) console.log("🔤 Vazirmatn font embedded for Persian text (chat, lists, input).");
   console.log("\nℹ️  Expected after patching (macOS):");
   console.log("   • macOS will ask again for previously granted permissions (the app signature changed).");
   console.log("   • Little Snitch / firewall tools will show an 'application modified' warning and re-ask old rules.");
@@ -277,3 +313,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     try { fs.rmSync(unpackedPath, { recursive: true, force: true }); } catch {}
   }
 }
+}
+
+main().catch((e) => {
+  console.error("❌ Fatal:", e.message);
+  process.exit(1);
+});
