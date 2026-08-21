@@ -11,8 +11,8 @@
  * - Idempotent: safe to run multiple times; undo with --restore
  * - Read-only inspection: run with --check to see what would happen
  *
- * Requires the @electron/asar library next to this script:
- *   npm install   (in this folder)
+ * Requires the @electron/asar library (installed at the repo root by npm):
+ *   npm install   (from the repo root)
  */
 
 const fs = require("fs");
@@ -30,9 +30,9 @@ let asar;
 try {
   asar = require("@electron/asar");
 } catch {
-  console.error("❌ The @electron/asar library was not found next to this script.");
+  console.error("❌ The @electron/asar library was not found.");
   console.error("\nInstall it once, then run again:");
-  console.error("   npm install     (inside this folder)");
+  console.error("   npm install     (at the repo root)");
   console.error("\nOr use the double-click launcher — it installs it automatically.");
   process.exit(1);
 }
@@ -119,7 +119,7 @@ function deriveUnpackOptions(unpackedDir) {
 
 // <Bundle.app>/Contents/Resources/app.asar -> <Bundle.app>
 function appBundlePath(asarPath) {
-  const bundle = path.resolve(path.dirname(asarPath), "..", "..");
+  const bundle = path.dirname(path.dirname(path.dirname(asarPath)));
   return path.basename(bundle).endsWith(".app") ? bundle : null;
 }
 
@@ -172,7 +172,7 @@ const asarPath = findAsarPath();
 if (!asarPath) {
   console.error("❌ Could not find AutoClaw's app.asar automatically.");
   console.error("\nPlease provide the manual path:");
-  console.error('  node autoclaw-rtl-patch.js "/Applications/AutoClaw.app/Contents/Resources/app.asar"');
+  console.error('  node autoclaw/autoclaw-rtl-patch.js "/Applications/AutoClaw.app/Contents/Resources/app.asar"');
   console.error("\nHow to find it on Mac: Right-click AutoClaw in Applications -> Show Package Contents -> Contents -> Resources");
   process.exit(1);
 }
@@ -309,12 +309,12 @@ try {
     preloadContent = preloadContent.slice(0, markerIndex).replace(/\s+$/, "") + "\n";
     fs.writeFileSync(preloadPath, preloadContent);
   }
-  // Optional embedded font: fonts/Vazirmatn-var.woff2 next to this script.
-  // Keeps the patched app fully offline — no Google Fonts / CDN requests at
+  // Optional embedded font: fonts/Vazirmatn-var.woff2 in the repo's shared
+  // fonts folder keeps the patched app fully offline — no CDN requests at
   // runtime. local('Vazirmatn'/'Vazir') comes first so a system-installed
   // font still wins when present; the embedded copy is the fallback.
   let fontFaceCss = "";
-  const fontPath = path.join(__dirname, "fonts", "Vazirmatn-var.woff2");
+  const fontPath = path.join(path.dirname(__dirname), "fonts", "Vazirmatn-var.woff2");
   if (fs.existsSync(fontPath)) {
     const fontB64 = fs.readFileSync(fontPath).toString("base64");
     fontFaceCss = "@font-face{font-family:'Vazirmatn Patched';src:local('Vazirmatn'),local('Vazir'),url(data:font/woff2;base64," + fontB64 + ") format('woff2');font-weight:100 900;font-display:swap;}";
@@ -329,33 +329,52 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     if (!document.getElementById('autoclaw-rtl-fix')) {
       const style = document.createElement('style');
       style.id = 'autoclaw-rtl-fix';
-      style.innerHTML = "${fontFaceCss}body, html { direction: ltr !important; } pre, code, pre *, code *, .xterm, .xterm *, [class*='editor' i] *, [class*='monaco' i] *, .ant-menu *, .ant-dropdown *, .ant-select-dropdown *, .ant-cascader-dropdown *, .ant-layout-sider *, aside *, nav * { direction: ltr !important; text-align: left !important; unicode-bidi: normal !important; } p, h1, h2, h3, h4, h5, h6, span, li, blockquote { unicode-bidi: plaintext !important; text-align: start !important; } .msg-user-text-bubble, .msg-user-text-bubble > div { unicode-bidi: plaintext !important; } textarea, input { unicode-bidi: plaintext !important; text-align: start !important; } [dir='rtl'], [dir='rtl'] p, [dir='rtl'] li, [dir='rtl'] span, [dir='rtl'] h1, [dir='rtl'] h2, [dir='rtl'] h3, [dir='rtl'] h4, [dir='rtl'] h5, [dir='rtl'] h6, [dir='rtl'] blockquote, .msg-user-text-bubble, textarea, input { font-family: 'Vazirmatn Patched', Vazirmatn, Vazir, 'PingFang SC', -apple-system, 'Segoe UI', sans-serif !important; } ol[dir='rtl'], ul[dir='rtl'] { direction: rtl !important; padding-right: 40px !important; padding-left: 0 !important; margin-right: 10px !important; } ol[dir='rtl'] li, ul[dir='rtl'] li { direction: rtl !important; text-align: right !important; } table[dir='rtl'] { direction: rtl !important; text-align: right !important; }";
+      style.innerHTML = "${fontFaceCss}body, html { direction: ltr !important; } pre, code, pre *, code *, .xterm, .xterm *, [class*='editor' i] *, [class*='monaco' i] *, .ant-menu *, .ant-dropdown *, .ant-select-dropdown *, .ant-cascader-dropdown *, .ant-layout-sider *, aside *, nav * { direction: ltr !important; text-align: left !important; unicode-bidi: normal !important; } p, h1, h2, h3, h4, h5, h6, li, blockquote { text-align: start !important; } .msg-user-text-bubble { text-align: start !important; } textarea, input { unicode-bidi: plaintext !important; text-align: start !important; } [dir='rtl'], [dir='rtl'] p, [dir='rtl'] li, [dir='rtl'] span, [dir='rtl'] h1, [dir='rtl'] h2, [dir='rtl'] h3, [dir='rtl'] h4, [dir='rtl'] h5, [dir='rtl'] h6, [dir='rtl'] blockquote, .msg-user-text-bubble, textarea, input { font-family: 'Vazirmatn Patched', Vazirmatn, Vazir, 'PingFang SC', -apple-system, 'Segoe UI', sans-serif !important; } ol[dir='rtl'], ul[dir='rtl'] { direction: rtl !important; padding-right: 40px !important; padding-left: 0 !important; margin-right: 10px !important; } ol[dir='rtl'] li, ul[dir='rtl'] li { direction: rtl !important; text-align: right !important; } table[dir='rtl'] { direction: rtl !important; text-align: right !important; }";
       (document.head || document.documentElement).appendChild(style);
     }
-    const RTL_TEXT = /[\\u0600-\\u06FF]/;
+    const RTL_CHARS = /[\\u0600-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF]/g;
+    const LTR_CHARS = /[A-Za-z]/g;
+    const countMatches = (text, re) => (text.match(re) || []).length;
     const PROTECTED = 'pre, code, .xterm, aside, nav, .ant-menu, .ant-dropdown, .ant-select-dropdown, .ant-cascader-dropdown, .ant-layout-sider, [class*="editor" i], [class*="monaco" i]';
     let scheduled = false;
     // AutoClaw renders user chat text as a raw text node inside a div
-    // (.msg-user-text-bubble > div) — detect RTL only in DIRECT text nodes
-    // for divs so layout wrappers are never flipped.
-    const directRTLText = (el) => {
+    // (.msg-user-text-bubble > div) — for divs only DIRECT text nodes count,
+    // so layout wrappers are never flipped.
+    const directTextCounts = (el) => {
+      let rtl = 0, ltr = 0;
       for (const n of el.childNodes) {
-        if (n.nodeType === 3 && RTL_TEXT.test(n.nodeValue)) return true;
+        if (n.nodeType === 3) {
+          const value = n.nodeValue || '';
+          rtl += countMatches(value, RTL_CHARS);
+          ltr += countMatches(value, LTR_CHARS);
+        }
       }
-      return false;
+      return [rtl, ltr];
     };
     const scan = () => {
       scheduled = false;
-      document.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, span, ul, ol, table, blockquote, div, textarea, input').forEach((el) => {
+      document.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, blockquote, ul, ol, table, div, textarea, input').forEach((el) => {
         const tag = el.tagName;
         if (tag === 'TEXTAREA' || tag === 'INPUT') {
           if (el.getAttribute('dir') !== 'auto') el.setAttribute('dir', 'auto');
           return;
         }
         if (el.closest(PROTECTED)) return;
-        const hasRTL = tag === 'DIV' ? directRTLText(el) : RTL_TEXT.test(el.textContent || '');
-        if (hasRTL && el.getAttribute('dir') !== 'rtl') el.setAttribute('dir', 'rtl');
-        else if (!hasRTL && el.getAttribute('dir') === 'rtl') el.removeAttribute('dir');
+        // Majority rule: a paragraph follows its dominant script, so
+        // "Claude Code این قابلیت را دارد" stays RTL and "use این tool" stays LTR.
+        let rtl, ltr;
+        if (tag === 'DIV') {
+          [rtl, ltr] = directTextCounts(el);
+        } else {
+          const text = el.textContent || '';
+          rtl = countMatches(text, RTL_CHARS);
+          ltr = countMatches(text, LTR_CHARS);
+        }
+        if (rtl > ltr) {
+          if (el.getAttribute('dir') !== 'rtl') el.setAttribute('dir', 'rtl');
+        } else if (el.getAttribute('dir') === 'rtl') {
+          el.removeAttribute('dir');
+        }
       });
     };
     const observer = new MutationObserver(() => {
@@ -433,7 +452,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   console.error("\n❌ Error:", error.message);
   if (error.message.includes("EACCES") || error.message.includes("EPERM")) {
     console.error("\n💡 Permission error. Try with sudo:");
-    console.error("   sudo node autoclaw-rtl-patch.js");
+    console.error("   sudo node autoclaw/autoclaw-rtl-patch.js");
   }
   for (const leftover of [tmpAsar, `${tmpAsar}.unpacked`, tempDir]) {
     try { if (fs.existsSync(leftover)) fs.rmSync(leftover, { recursive: true, force: true }); } catch {}

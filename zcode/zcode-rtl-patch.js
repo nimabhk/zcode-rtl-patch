@@ -2,7 +2,7 @@
 /**
  * ZCode - Safe Smart RTL Fixer (Sidebar Protected)
  * Cross-platform: Windows, macOS, Linux
- * 
+ *
  * What it does:
  * - Keeps UI, sidebar, editor LTR
  * - Auto-detects Persian/Arabic text and sets dir="rtl" only for content
@@ -20,6 +20,18 @@ const { execFileSync } = require("child_process");
 
 console.log("\n🌟 ZCode Safe Smart RTL Fixer (Cross-Platform)");
 console.log("═══════════════════════════════════════════════════\n");
+
+// --- @electron/asar library (local install keeps the supply chain pinned) ---
+let asarLib;
+try {
+  asarLib = require("@electron/asar");
+} catch {
+  console.error("❌ The @electron/asar library was not found.");
+  console.error("\nInstall it once, then run again:");
+  console.error("   npm install     (at the repo root)");
+  console.error("\nOr use the double-click launcher — it installs it automatically.");
+  process.exit(1);
+}
 
 const PATCH_MARKER = "SAFE SMART RTL FIX";
 
@@ -49,6 +61,12 @@ function appBundlePath(asar) {
   return path.basename(bundle).endsWith(".app") ? bundle : null;
 }
 
+// True when target resolves inside base (prefix containment, no parent hops)
+function isInsideDir(target, base) {
+  const root = path.resolve(base) + path.sep;
+  return path.resolve(target).startsWith(root);
+}
+
 // External tools are invoked with literal command names and argument arrays —
 // never through a shell string, so paths cannot turn into shell syntax.
 function reSignBundle(bundle) {
@@ -56,7 +74,7 @@ function reSignBundle(bundle) {
   execFileSync("codesign", ["--sign", "-", "--force", "--deep", bundle], { stdio: "pipe" });
 }
 
-const PATCH_VERSION = "1.2.0";
+const PATCH_VERSION = "1.2.1";
 const { getVazirmatnFont } = require("./vazirmatn-font");
 
 function findAsarPath() {
@@ -99,7 +117,7 @@ let asarPath = findAsarPath();
 if (!asarPath) {
   console.error("❌ Could not find app.asar automatically.");
   console.error("\nPlease provide manual path:");
-  console.error('  node zcode-rtl-patch.js "/Applications/ZCode.app/Contents/Resources/app.asar"');
+  console.error('  node zcode/zcode-rtl-patch.js "/Applications/ZCode.app/Contents/Resources/app.asar"');
   console.error("\nHow to find it on Mac: Right-click ZCode in Applications -> Show Package Contents -> Contents -> Resources");
   process.exit(1);
 }
@@ -164,19 +182,17 @@ try {
   let extracted = false;
   for (let i = 0; i < 10 && !extracted; i++) {
     try {
-      execFileSync("npx", ["asar", "extract", asarPath, unpackedPath], { stdio: "pipe" });
+      asarLib.extractAll(asarPath, unpackedPath);
       extracted = true;
     } catch (err) {
-      const stderr = err.stderr?.toString() || "";
-      const match = stderr.match(/ENOENT: no such file or directory, open '([^']+)'/);
-      if (match) {
-        fs.mkdirSync(path.dirname(match[1]), { recursive: true });
-        fs.writeFileSync(match[1], "");
+      // Some archives contain entries whose parent directories are implicit —
+      // create the missing destination file (inside the temp extract dir only)
+      // as an empty placeholder and retry.
+      if (err.code === "ENOENT" && err.path && isInsideDir(err.path, unpackedPath)) {
+        fs.mkdirSync(path.dirname(err.path), { recursive: true });
+        fs.writeFileSync(err.path, "");
       } else {
-        if (i === 0) {
-          console.log("   Installing asar...");
-          execFileSync("npm", ["install", "-g", "asar"], { stdio: "inherit" });
-        }
+        throw err;
       }
     }
   }
@@ -271,9 +287,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 `;
   fs.appendFileSync(preloadPath, safeRtlCode);
 
-  // 4. Repack
+  // 4. Repack (pinned local library — no shell, no child processes)
   console.log("📦 Repacking...");
-  execFileSync("npx", ["asar", "pack", unpackedPath, asarPath], { stdio: "pipe" });
+  await asarLib.createPackageWithOptions(unpackedPath, asarPath, {});
 
   // 5. Cleanup
   fs.rmSync(unpackedPath, { recursive: true, force: true });
@@ -307,7 +323,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   console.error("\n❌ Error:", error.message);
   if (error.message.includes("EACCES") || error.message.includes("EPERM")) {
     console.error("\n💡 Permission error. Try with sudo:");
-    console.error("   sudo node zcode-rtl-patch.js");
+    console.error("   sudo node zcode/zcode-rtl-patch.js");
   }
   if (fs.existsSync(unpackedPath)) {
     try { fs.rmSync(unpackedPath, { recursive: true, force: true }); } catch {}

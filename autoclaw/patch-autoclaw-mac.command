@@ -11,12 +11,12 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-# One-time setup: the patcher needs the pinned @electron/asar library
-if [ ! -d "node_modules/@electron/asar" ]; then
-  echo "📦 First run — installing dependencies (npm install)..."
-  npm install --no-fund --no-audit
+# One-time setup: the pinned @electron/asar library lives at the repo root
+if [ ! -d "../node_modules/@electron/asar" ]; then
+  echo "📦 First run — installing dependencies (npm install at repo root)..."
+  (cd .. && npm install --no-fund --no-audit)
   if [ $? -ne 0 ]; then
-    echo "❌ npm install failed. Run it manually in this folder and try again."
+    echo "❌ npm install failed. Run it manually in the repo root and try again."
     read -rp "Press Enter to close..."
     exit 1
   fi

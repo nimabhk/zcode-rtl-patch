@@ -1,27 +1,55 @@
-// Vazirmatn font loader for the RTL patchers.
+// Vazirmatn font loader for the ZCode RTL patcher.
 // Vazirmatn is SIL OFL licensed — embedding and redistribution are allowed.
-// Fonts ship in the repo's fonts/ folder; if missing there, they are
-// downloaded once from the official repo at patch time (never at app runtime).
+// Fonts ship in the repo's shared fonts/ folder (release tag v33.003); if
+// missing there, they are downloaded once from that pinned tag at patch time —
+// never at app runtime. Only https://raw.githubusercontent.com is ever contacted.
 const fs = require("fs");
 const path = require("path");
 const https = require("https");
 
+const FONT_TAG = "v33.003";
 const FONT_URLS = {
-  regular: "https://raw.githubusercontent.com/rastikerdar/vazirmatn/master/fonts/webfonts/Vazirmatn-Regular.woff2",
-  bold: "https://raw.githubusercontent.com/rastikerdar/vazirmatn/master/fonts/webfonts/Vazirmatn-Bold.woff2",
+  regular: `https://raw.githubusercontent.com/rastikerdar/vazirmatn/${FONT_TAG}/fonts/webfonts/Vazirmatn-Regular.woff2`,
+  bold: `https://raw.githubusercontent.com/rastikerdar/vazirmatn/${FONT_TAG}/fonts/webfonts/Vazirmatn-Bold.woff2`,
 };
+
+// Host allowlist: every requested URL (redirects included) must be https and
+// on an allowed host — localhost, private, or any other origin is rejected.
+const ALLOWED_HOSTS = new Set(["raw.githubusercontent.com"]);
+
+function assertAllowedUrl(target) {
+  const parsed = new URL(target);
+  if (parsed.protocol !== "https:") throw new Error(`blocked non-https URL: ${target}`);
+  if (!ALLOWED_HOSTS.has(parsed.hostname)) throw new Error(`blocked untrusted host: ${parsed.hostname}`);
+}
 
 function httpsGetBuffer(url, redirectsLeft = 3) {
   return new Promise((resolve, reject) => {
-    const req = https.get(url, { timeout: 20000 }, (res) => {
+    let checked;
+    try {
+      assertAllowedUrl(url);
+      checked = new URL(url).href;
+    } catch (e) {
+      reject(e);
+      return;
+    }
+    const req = https.get(checked, { timeout: 20000 }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirectsLeft > 0) {
         res.resume();
-        resolve(httpsGetBuffer(new URL(res.headers.location, url).href, redirectsLeft - 1));
+        let next;
+        try {
+          next = new URL(res.headers.location, checked).href;
+          assertAllowedUrl(next);
+        } catch (e) {
+          reject(e);
+          return;
+        }
+        resolve(httpsGetBuffer(next, redirectsLeft - 1));
         return;
       }
       if (res.statusCode !== 200) {
         res.resume();
-        reject(new Error(`HTTP ${res.statusCode} for ${url}`));
+        reject(new Error(`HTTP ${res.statusCode} for ${checked}`));
         return;
       }
       const chunks = [];
@@ -38,7 +66,7 @@ function httpsGetBuffer(url, redirectsLeft = 3) {
 // Never throws — the patch continues without a custom font on any failure.
 async function getVazirmatnFont(skip) {
   if (skip) return null;
-  const fontsDir = path.join(__dirname, "fonts");
+  const fontsDir = path.join(path.dirname(__dirname), "fonts");
   const regularFile = path.join(fontsDir, "Vazirmatn-Regular.woff2");
   const boldFile = path.join(fontsDir, "Vazirmatn-Bold.woff2");
   const isWoff2 = (buf) => buf.length > 1000 && buf.slice(0, 4).toString("latin1") === "wOF2";

@@ -2,12 +2,14 @@
 
 Safe, smart RTL (Right-to-Left) patches for **ZCode** and **AutoClaw** (ZhipuAI's Electron apps) that add Persian/Arabic support without breaking the UI.
 
-Both patches keep the editor, sidebar, activity bar, terminal, and menus in LTR, and only apply RTL to content that actually contains Arabic/Persian characters (`[\u0600-\u06FF]`).
+Both patches keep the editor, sidebar, activity bar, terminal, and menus in LTR, and only apply RTL to content whose dominant script is Arabic/Persian.
 
 | App | Patch script | Launcher (double-click) | Notes |
 |---|---|---|---|
-| [ZCode](https://zcode.app) | `zcode-rtl-patch.js` | `patch-mac.command` / `patch-windows.bat` | Uses `npx asar` |
-| AutoClaw | `autoclaw-rtl-patch.js` | `patch-autoclaw-mac.command` / `patch-autoclaw-windows.bat` | Uses pinned local `@electron/asar`, embeds Vazirmatn font, `--check` mode |
+| [ZCode](https://zcode.app) | `zcode/zcode-rtl-patch.js` | `zcode/patch-zcode-mac.command` / `zcode/patch-zcode-windows.bat` | Optional Vazirmatn embedding (`--no-font`) |
+| AutoClaw | `autoclaw/autoclaw-rtl-patch.js` | `autoclaw/patch-autoclaw-mac.command` / `autoclaw/patch-autoclaw-windows.bat` | Embeds Vazirmatn font, `--check` mode |
+
+Both patchers use the pinned local `@electron/asar` library (installed once by `npm install` at the repo root) and share the bundled fonts in `fonts/`.
 
 ---
 
@@ -25,7 +27,7 @@ Adds content-aware RTL to AutoClaw's chat UI (agent messages, your own messages,
 - **Verified repack**: the new archive is checked (file count, unpacked set, payload marker) before it replaces the original — a failure never touches your app
 - **Safe**: automatic backup `app.asar.backup` — undo anytime with `--restore`
 - **Update-safe**: after every AutoClaw auto-update, just run it again — it refreshes the backup, never downgrades
-- **Read-only inspection**: `node autoclaw-rtl-patch.js --check` shows what would be patched, without touching anything
+- **Read-only inspection**: `node autoclaw/autoclaw-rtl-patch.js --check` shows what would be patched, without touching anything
 
 ### 📋 Prerequisites
 
@@ -47,16 +49,16 @@ Make sure AutoClaw is not running (Quit from Dock / Task Manager).
 #### 3. Run the patch
 
 **Easy way — double-click:**
-- **macOS**: double-click `patch-autoclaw-mac.command` (checks Node, installs dependencies on first run, detects a running AutoClaw, offers a sudo retry)
-- **Windows**: double-click `patch-autoclaw-windows.bat` (accept the administrator prompt)
+- **macOS**: double-click `autoclaw/patch-autoclaw-mac.command` (checks Node, installs dependencies on first run, detects a running AutoClaw, offers a sudo retry)
+- **Windows**: double-click `autoclaw/patch-autoclaw-windows.bat` (accept the administrator prompt)
 
 **Or from the terminal:**
 ```bash
-node autoclaw-rtl-patch.js
+node autoclaw/autoclaw-rtl-patch.js
 # Read-only inspection first (optional):
-node autoclaw-rtl-patch.js --check
+node autoclaw/autoclaw-rtl-patch.js --check
 # If auto-detection fails, provide the path manually:
-node autoclaw-rtl-patch.js "/Applications/AutoClaw.app/Contents/Resources/app.asar"
+node autoclaw/autoclaw-rtl-patch.js "/Applications/AutoClaw.app/Contents/Resources/app.asar"
 ```
 
 You should see:
@@ -78,8 +80,8 @@ You should see:
 1. Finds `app.asar` and backs it up (`app.asar.backup`)
 2. Extracts it with the pinned `@electron/asar` library (no unpinned `npx` — supply chain stays locked)
 3. Appends a self-contained block to `out/preload/index.js`:
-   - CSS locks the UI LTR and applies `unicode-bidi: plaintext` to content elements
-   - A debounced `MutationObserver` sets `dir="rtl"` only on elements with RTL text (raw user-bubble `div`s are detected by their *direct* text nodes, so layout wrappers never flip)
+   - CSS locks the UI LTR; textareas/inputs get `unicode-bidi: plaintext`
+   - A debounced `MutationObserver` sets `dir="rtl"` on elements whose dominant script is RTL (majority rule — mixed sentences stay readable; raw user-bubble `div`s are detected by their *direct* text nodes, so layout wrappers never flip)
    - `textarea`/`input` get `dir="auto"`
    - An embedded `@font-face` (Vazirmatn variable, `local()` first, then a base64 data URI) styles RTL content and inputs
 4. Repacks **preserving the exact unpacked file set**, verifies the new archive, then swaps it in atomically
@@ -88,7 +90,7 @@ You should see:
 ### ♻️ Uninstall / Restore
 
 ```bash
-node autoclaw-rtl-patch.js --restore
+node autoclaw/autoclaw-rtl-patch.js --restore
 ```
 Manual restore: copy `app.asar.backup` over `app.asar` in `AutoClaw.app/Contents/Resources/`, then re-sign:
 ```bash
@@ -115,7 +117,7 @@ A safe, smart RTL patch for [ZCode](https://zcode.app) (VS Code/Electron fork) t
 
 - **Sidebar Protected**: Editor, sidebar, menus, activity bar stay LTR
 - **Smart Bidi**: each paragraph follows its dominant script — mixed Persian/English sentences stay readable
-- **Smart Detection**: Only elements containing Arabic-script characters become RTL
+- **Smart Detection**: an element becomes RTL when Arabic-script characters dominate its text
 - **RTL Inputs**: textareas/inputs use `unicode-bidi: plaintext` (fixes input caret jumps and first-line direction)
 - **Optional Vazirmatn font**: embedded as base64 at patch time (`--no-font` to skip); taken from `fonts/` if bundled, otherwise downloaded once from the official Vazirmatn repo at patch time — never at app runtime
 - **Safe**: Automatic backup — undo anytime with `--restore`
@@ -128,6 +130,7 @@ A safe, smart RTL patch for [ZCode](https://zcode.app) (VS Code/Electron fork) t
 ```bash
 git clone https://github.com/nimabhk/zcode-rtl-patch.git
 cd zcode-rtl-patch
+npm install        # one-time — installs the pinned @electron/asar library
 ```
 
 #### 2. Close ZCode completely
@@ -136,27 +139,27 @@ Make sure ZCode is not running (Quit from Dock / Task Manager).
 #### 3. Run the patch
 
 **Easy way — double-click:**
-- **macOS**: double-click `patch-mac.command`
-- **Windows**: double-click `patch-windows.bat` (accept the administrator prompt)
+- **macOS**: double-click `zcode/patch-zcode-mac.command` (checks Node, installs dependencies on first run, detects a running ZCode, offers a sudo retry)
+- **Windows**: double-click `zcode/patch-zcode-windows.bat` (accept the administrator prompt)
 
 **Or from the terminal:**
 
 **On macOS:**
 ```bash
-sudo node zcode-rtl-patch.js
+sudo node zcode/zcode-rtl-patch.js
 # If auto-detection fails, provide path manually:
-sudo node zcode-rtl-patch.js "/Applications/ZCode.app/Contents/Resources/app.asar"
+sudo node zcode/zcode-rtl-patch.js "/Applications/ZCode.app/Contents/Resources/app.asar"
 ```
 
 **On Windows (PowerShell as Admin):**
 ```powershell
-node zcode-rtl-patch.js
-node zcode-rtl-patch.js "C:\Users\%USERNAME%\AppData\Local\Programs\ZCode\resources\app.asar"
+node zcode/zcode-rtl-patch.js
+node zcode/zcode-rtl-patch.js "C:\Users\%USERNAME%\AppData\Local\Programs\ZCode\resources\app.asar"
 ```
 
 **On Linux:**
 ```bash
-sudo node zcode-rtl-patch.js
+sudo node zcode/zcode-rtl-patch.js
 ```
 
 You should see:
@@ -178,7 +181,7 @@ The script:
 1. Finds `app.asar` (Electron archive)
 2. Loads the Vazirmatn font (bundled `fonts/`, or a one-time official-repo download) unless `--no-font` is given
 3. Creates backup `app.asar.backup`
-4. Extracts it using `asar`
+4. Extracts it with the pinned `@electron/asar` library (same supply-chain pinning as AutoClaw — no `npx`)
 5. Injects CSS + MutationObserver into `out/preload/index.cjs`
    - CSS forces UI to stay LTR; embedded `@font-face` styles Persian content
    - JS observer sets `dir="rtl"` per paragraph using a dominant-script majority rule
@@ -189,7 +192,7 @@ The script:
 
 **Automatic restore (recommended):**
 ```bash
-node zcode-rtl-patch.js --restore
+node zcode/zcode-rtl-patch.js --restore
 ```
 
 **Manual restore:**
@@ -232,6 +235,12 @@ Or simply reinstall ZCode.
 ---
 
 ## 📜 Changelog
+
+**v1.2.1 — 2026-08-22**
+- **AutoClaw**: payload ported to the same majority-script bidi rule as ZCode — English-leading mostly-Persian sentences stay readable; extended Arabic-script Unicode ranges; user-bubble detection now counts the dominant script (direct text nodes)
+- **ZCode**: switched from `npx asar` to the pinned local `@electron/asar` library — fixes Windows (npx cannot run through argument-array calls there) and removes the unpinned-npx supply-chain concern
+- **Supply chain**: Vazirmatn download URLs pinned to release tag `v33.003` (byte-identical to the bundled fonts) and restricted to `raw.githubusercontent.com` over https, redirects included
+- **Repo layout**: patchers moved into per-app folders (`zcode/`, `autoclaw/`); ZCode launchers renamed to `patch-zcode-mac.command` / `patch-zcode-windows.bat`; shared fonts stay in `fonts/`; both patchers now share the repo-root `npm install`
 
 **v1.2.0 — 2026-08-22**
 - **New: AutoClaw patcher** (`autoclaw-rtl-patch.js`) with its own launchers

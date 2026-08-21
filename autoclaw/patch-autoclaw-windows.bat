@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-title ZCode RTL Patch
+title AutoClaw RTL Patch
 cd /d "%~dp0"
 
 :: Self-elevate to administrator (patching app files usually requires it)
@@ -18,13 +18,26 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo Make sure ZCode is fully closed before continuing.
+:: One-time setup: the pinned @electron/asar library lives at the repo root
+if not exist "%~dp0..\node_modules\@electron\asar" (
+  echo First run — installing dependencies ^(npm install, repo root^)...
+  pushd "%~dp0.."
+  call npm install --no-fund --no-audit
+  popd
+  if errorlevel 1 (
+    echo [ERROR] npm install failed. Run it manually in the repo root and try again.
+    pause
+    exit /b 1
+  )
+)
+
+echo Make sure AutoClaw is fully closed before continuing.
 pause
 
-node zcode-rtl-patch.js %*
+node autoclaw-rtl-patch.js %*
 echo.
 if %errorlevel% equ 0 (
-  echo Done. Restart ZCode to see RTL support.
+  echo Done. Restart AutoClaw to see RTL support.
 ) else (
   echo Patch failed. See the messages above or the README Troubleshooting section.
 )

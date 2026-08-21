@@ -11,6 +11,12 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
+# One-time setup: the pinned @electron/asar library lives at the repo root
+if [ ! -d "../node_modules/@electron/asar" ]; then
+  echo "📥 Installing dependencies (one-time, repo root)..."
+  (cd .. && npm install --no-fund --no-audit) || echo "⚠️ npm install failed — run it in the repo root, then retry."
+fi
+
 if pgrep -x "ZCode" >/dev/null 2>&1; then
   echo "⚠️  ZCode is currently running. Please quit it completely (Cmd+Q) first."
   read -rp "Press Enter once you have quit ZCode (Ctrl+C to abort)... "
