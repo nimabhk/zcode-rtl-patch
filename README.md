@@ -1,3 +1,5 @@
+**English** | [فارسی](README.fa.md)
+
 # ZCode & AutoClaw — Safe Smart RTL Fixers
 
 Safe, smart RTL (Right-to-Left) patches for **ZCode** and **AutoClaw** (ZhipuAI's Electron apps) that add Persian/Arabic support without breaking the UI.
