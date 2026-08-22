@@ -74,7 +74,7 @@ function reSignBundle(bundle) {
   execFileSync("codesign", ["--sign", "-", "--force", "--deep", bundle], { stdio: "pipe" });
 }
 
-const PATCH_VERSION = "1.2.1";
+const PATCH_VERSION = "1.2.4";
 const { getVazirmatnFont } = require("./vazirmatn-font");
 
 function findAsarPath() {
@@ -249,19 +249,42 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     if (!document.getElementById('zcode-rtl-fix')) {
       const style = document.createElement('style');
       style.id = 'zcode-rtl-fix';
-      style.innerHTML = "${fontFaces}body, html { direction: ltr !important; } pre, code, pre *, code *, .editor-instance *, [class*='editor'], aside *, nav *, [class*='sidebar' i] *, [class*='activitybar' i] *, [class*='menu' i] * { direction: ltr !important; text-align: left !important; unicode-bidi: normal !important; } textarea, input { unicode-bidi: plaintext !important; } p, h1, h2, h3, h4, h5, h6, li, blockquote, dd, dt, figcaption, td, th { text-align: start !important; } ol[dir='rtl'], ul[dir='rtl'] { direction: rtl !important; padding-right: 40px !important; padding-left: 0 !important; margin-right: 10px !important; } ol[dir='rtl'] li, ul[dir='rtl'] li { direction: rtl !important; text-align: right !important; } table[dir='rtl'] { direction: rtl !important; text-align: right !important; } p, h1, h2, h3, h4, h5, h6, li, blockquote, dd, dt, figcaption, td, th, textarea, input { font-family: 'Vazirmatn', 'Vazir', -apple-system, 'Segoe UI', sans-serif !important; }";
+      style.innerHTML = "${fontFaces}body, html { direction: ltr !important; } pre, code, pre *, code *, .editor-instance *, [class*='editor'], [class*='editor'] *, [class*='activitybar' i] *, [class*='menu' i] * { direction: ltr !important; text-align: left !important; unicode-bidi: normal !important; } aside, nav, [class*='sidebar' i] { direction: ltr !important; } textarea, input { unicode-bidi: plaintext !important; } p, h1, h2, h3, h4, h5, h6, li, blockquote, dd, dt, figcaption, td, th, [dir='rtl'] { text-align: start !important; } ol[dir='rtl'], ul[dir='rtl'] { direction: rtl !important; padding-right: 40px !important; padding-left: 0 !important; margin-right: 10px !important; } ol[dir='rtl'] li, ul[dir='rtl'] li { direction: rtl !important; text-align: right !important; } table[dir='rtl'] { direction: rtl !important; text-align: right !important; } p, h1, h2, h3, h4, h5, h6, li, blockquote, dd, dt, figcaption, td, th, textarea, input { font-family: 'Vazirmatn', 'Vazir', -apple-system, 'Segoe UI', sans-serif !important; } @keyframes zcode-rtl-reveal { from { transform: translateX(0); } to { transform: translateX(55%); } } aside span[dir='rtl']:hover, nav span[dir='rtl']:hover, [class*='sidebar' i] span[dir='rtl']:hover, [class*='list-row' i] span[dir='rtl']:hover { animation: zcode-rtl-reveal 3.5s ease-in-out infinite alternate !important; }";
       document.head.appendChild(style);
     }
     const RTL_CHARS = /[\\u0600-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF]/g;
     const LTR_CHARS = /[A-Za-z]/g;
-    document.querySelectorAll('p, li, blockquote, dd, dt, figcaption, td, th, h1, h2, h3, h4, h5, h6, ul, ol, table').forEach(el => {
-      if (el.closest('pre') || el.closest('code') || el.closest('[class*="editor"]') || el.closest('aside') || el.closest('nav') || el.closest('[class*="sidebar" i]') || el.closest('[class*="menu" i]')) return;
-      const text = el.textContent || '';
-      const rtlCount = (text.match(RTL_CHARS) || []).length;
-      const ltrCount = (text.match(LTR_CHARS) || []).length;
+    const countMatches = (text, re) => (text.match(re) || []).length;
+    // Chat bubbles and sidebar/task titles render text as direct child nodes
+    // of divs — only DIRECT text nodes count there, so layout wrappers never flip.
+    const directTextCounts = (el) => {
+      let rtl = 0, ltr = 0;
+      for (const n of el.childNodes) {
+        if (n.nodeType === 3) {
+          const value = n.nodeValue || '';
+          rtl += countMatches(value, RTL_CHARS);
+          ltr += countMatches(value, LTR_CHARS);
+        }
+      }
+      return [rtl, ltr];
+    };
+    document.querySelectorAll('p, li, blockquote, dd, dt, figcaption, td, th, h1, h2, h3, h4, h5, h6, ul, ol, table, div, span').forEach(el => {
+      if (el.closest('pre') || el.closest('code') || el.closest('[class*="editor"]') || el.closest('[class*="menu" i]') || el.closest('[class*="activitybar" i]')) return;
+      // Row contexts (sidebars, list rows): ONLY leaf text spans may flip.
+      // Flipping any container there (div/li/ul/p/…) also flips timestamps,
+      // badges, fade overlays and marquee geometry — only the text should RTL.
+      if (el.tagName !== 'SPAN' && el.closest('aside, nav, [class*="sidebar" i], [class*="list-row" i]')) return;
+      let rtl, ltr;
+      if (el.tagName === 'DIV') {
+        [rtl, ltr] = directTextCounts(el);
+      } else {
+        const text = el.textContent || '';
+        rtl = countMatches(text, RTL_CHARS);
+        ltr = countMatches(text, LTR_CHARS);
+      }
       // Majority rule: a paragraph follows its dominant script, so
       // "Claude Code این قابلیت را دارد" stays RTL and "use این tool" stays LTR.
-      if (rtlCount > ltrCount) {
+      if (rtl > ltr) {
         if (el.getAttribute('dir') !== 'rtl') el.setAttribute('dir', 'rtl');
       } else if (el.getAttribute('dir') === 'rtl') {
         el.removeAttribute('dir');

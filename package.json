@@ -1,6 +1,6 @@
 {
   "name": "zcode-rtl-patch",
-  "version": "1.2.1",
+  "version": "1.2.4",
   "private": true,
   "description": "Safe Smart RTL fixers for ZCode and AutoClaw (Electron apps)",
   "license": "MIT",

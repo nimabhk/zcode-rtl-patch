@@ -329,13 +329,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     if (!document.getElementById('autoclaw-rtl-fix')) {
       const style = document.createElement('style');
       style.id = 'autoclaw-rtl-fix';
-      style.innerHTML = "${fontFaceCss}body, html { direction: ltr !important; } pre, code, pre *, code *, .xterm, .xterm *, [class*='editor' i] *, [class*='monaco' i] *, .ant-menu *, .ant-dropdown *, .ant-select-dropdown *, .ant-cascader-dropdown *, .ant-layout-sider *, aside *, nav * { direction: ltr !important; text-align: left !important; unicode-bidi: normal !important; } p, h1, h2, h3, h4, h5, h6, li, blockquote { text-align: start !important; } .msg-user-text-bubble { text-align: start !important; } textarea, input { unicode-bidi: plaintext !important; text-align: start !important; } [dir='rtl'], [dir='rtl'] p, [dir='rtl'] li, [dir='rtl'] span, [dir='rtl'] h1, [dir='rtl'] h2, [dir='rtl'] h3, [dir='rtl'] h4, [dir='rtl'] h5, [dir='rtl'] h6, [dir='rtl'] blockquote, .msg-user-text-bubble, textarea, input { font-family: 'Vazirmatn Patched', Vazirmatn, Vazir, 'PingFang SC', -apple-system, 'Segoe UI', sans-serif !important; } ol[dir='rtl'], ul[dir='rtl'] { direction: rtl !important; padding-right: 40px !important; padding-left: 0 !important; margin-right: 10px !important; } ol[dir='rtl'] li, ul[dir='rtl'] li { direction: rtl !important; text-align: right !important; } table[dir='rtl'] { direction: rtl !important; text-align: right !important; }";
+      style.innerHTML = "${fontFaceCss}body, html { direction: ltr !important; } pre, code, pre *, code *, .xterm, .xterm *, [class*='editor' i] *, [class*='monaco' i] *, .ant-dropdown *, .ant-select-dropdown *, .ant-cascader-dropdown * { direction: ltr !important; text-align: left !important; unicode-bidi: normal !important; } aside, nav, .ant-menu, .ant-layout-sider { direction: ltr !important; } p, h1, h2, h3, h4, h5, h6, li, blockquote, [dir='rtl'] { text-align: start !important; } .msg-user-text-bubble { text-align: start !important; } textarea, input { unicode-bidi: plaintext !important; text-align: start !important; } [dir='rtl'], [dir='rtl'] p, [dir='rtl'] li, [dir='rtl'] span, [dir='rtl'] h1, [dir='rtl'] h2, [dir='rtl'] h3, [dir='rtl'] h4, [dir='rtl'] h5, [dir='rtl'] h6, [dir='rtl'] blockquote, .msg-user-text-bubble, textarea, input { font-family: 'Vazirmatn Patched', Vazirmatn, Vazir, 'PingFang SC', -apple-system, 'Segoe UI', sans-serif !important; } ol[dir='rtl'], ul[dir='rtl'] { direction: rtl !important; padding-right: 40px !important; padding-left: 0 !important; margin-right: 10px !important; } ol[dir='rtl'] li, ul[dir='rtl'] li { direction: rtl !important; text-align: right !important; } table[dir='rtl'] { direction: rtl !important; text-align: right !important; }";
       (document.head || document.documentElement).appendChild(style);
     }
     const RTL_CHARS = /[\\u0600-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF]/g;
     const LTR_CHARS = /[A-Za-z]/g;
     const countMatches = (text, re) => (text.match(re) || []).length;
-    const PROTECTED = 'pre, code, .xterm, aside, nav, .ant-menu, .ant-dropdown, .ant-select-dropdown, .ant-cascader-dropdown, .ant-layout-sider, [class*="editor" i], [class*="monaco" i]';
+    const PROTECTED = 'pre, code, .xterm, .ant-dropdown, .ant-select-dropdown, .ant-cascader-dropdown, [class*="editor" i], [class*="monaco" i]';
     let scheduled = false;
     // AutoClaw renders user chat text as a raw text node inside a div
     // (.msg-user-text-bubble > div) — for divs only DIRECT text nodes count,
@@ -353,7 +353,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     };
     const scan = () => {
       scheduled = false;
-      document.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, blockquote, ul, ol, table, div, textarea, input').forEach((el) => {
+      document.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, blockquote, span, ul, ol, table, div, textarea, input').forEach((el) => {
         const tag = el.tagName;
         if (tag === 'TEXTAREA' || tag === 'INPUT') {
           if (el.getAttribute('dir') !== 'auto') el.setAttribute('dir', 'auto');
