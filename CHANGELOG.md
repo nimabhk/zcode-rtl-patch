@@ -2,6 +2,16 @@
 
 All notable changes to this project. The date format is YYYY-MM-DD.
 
+## [1.2.5] — 2026-08-23
+
+### AutoClaw (streaming rewrite)
+- **Anti-flicker two-tier bidi**: during streaming, ONE sticky `dir="rtl"` attribute is placed on the streaming message's text container — discovered **structurally** from the mutating text blocks (bounded shallow-ancestor growth, never by class-name matching) — so React's node re-creation cannot cause LTR/RTL flicker, and the flip can structurally never escape the message into UI chrome (menus, toolbars, input box). Direction is decided early from the first Persian words, not at stream end.
+- **Settle pass** (after ~800 ms of mutation silence, plus a 60 s sweep): pure-English paragraphs/headers inside RTL messages get `dir="ltr"`; mixed paragraphs inherit the message direction — readable while streaming, polished after it finishes.
+- Code-block text is excluded from the script-majority count, so Persian replies full of code still count as Persian.
+
+### Both patchers
+- **Arrow mirroring in RTL text**: right-pointing arrows (→ ⇒ ⟶ ➡) are mirrored to left-pointing (← ⇐ ⟵ ⬅) inside RTL content. The replacement is one-way, so repeated passes and React re-renders stay idempotent; code blocks (`pre`/`code`/`kbd`) are never touched.
+
 ## [1.2.4] — 2026-08-22
 
 ### ZCode

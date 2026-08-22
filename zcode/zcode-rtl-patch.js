@@ -74,7 +74,7 @@ function reSignBundle(bundle) {
   execFileSync("codesign", ["--sign", "-", "--force", "--deep", bundle], { stdio: "pipe" });
 }
 
-const PATCH_VERSION = "1.2.4";
+const PATCH_VERSION = "1.2.5";
 const { getVazirmatnFont } = require("./vazirmatn-font");
 
 function findAsarPath() {
@@ -268,6 +268,24 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }
       return [rtl, ltr];
     };
+    // Mirror right-pointing arrows in RTL text (one-way only, so repeated
+    // passes and editor re-renders stay idempotent). Code stays untouched.
+    const ARROW_CHARS = /[\\u2192\\u21D2\\u27F6\\u27A1]/;
+    const ARROW_GLOBAL = /[\\u2192\\u21D2\\u27F6\\u27A1]/g;
+    const ARROW_MAP = { '\\u2192': '\\u2190', '\\u21D2': '\\u21D0', '\\u27F6': '\\u27F5', '\\u27A1': '\\u2B05' };
+    const flipRtlArrows = (root) => {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => {
+        let p = n.parentElement;
+        while (p && p !== root) {
+          if (p.tagName === 'PRE' || p.tagName === 'CODE' || p.tagName === 'KBD') return NodeFilter.FILTER_REJECT;
+          p = p.parentElement;
+        }
+        return ARROW_CHARS.test(n.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      } });
+      const nodes = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      for (const n of nodes) n.nodeValue = n.nodeValue.replace(ARROW_GLOBAL, (ch) => ARROW_MAP[ch]);
+    };
     document.querySelectorAll('p, li, blockquote, dd, dt, figcaption, td, th, h1, h2, h3, h4, h5, h6, ul, ol, table, div, span').forEach(el => {
       if (el.closest('pre') || el.closest('code') || el.closest('[class*="editor"]') || el.closest('[class*="menu" i]') || el.closest('[class*="activitybar" i]')) return;
       // Row contexts (sidebars, list rows): ONLY leaf text spans may flip.
@@ -286,6 +304,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       // "Claude Code این قابلیت را دارد" stays RTL and "use این tool" stays LTR.
       if (rtl > ltr) {
         if (el.getAttribute('dir') !== 'rtl') el.setAttribute('dir', 'rtl');
+        if (ARROW_CHARS.test(el.textContent || '')) flipRtlArrows(el);
       } else if (el.getAttribute('dir') === 'rtl') {
         el.removeAttribute('dir');
       }

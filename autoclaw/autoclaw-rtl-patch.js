@@ -324,23 +324,67 @@ try {
   }
   const safeRtlCode = `
 // --- ${PATCH_MARKER} (UI PROTECTED: terminal, menus, sidebar and editors stay LTR) ---
+// Two-tier bidi v1.2.5 (anti-flicker, scope-safe):
+//   stream pass — ONE sticky dir on the streaming message's text container,
+//                 discovered STRUCTURALLY from the mutating text blocks
+//                 (bounded shallow-ancestor growth, never class-substring
+//                 matching), so it can never escape the message into UI chrome.
+//   settle pass — after ~800ms of mutation silence (plus a 60s sweep):
+//                 per-paragraph polish; pure-English lines/headers inside an
+//                 RTL message get dir="ltr". Right-pointing arrows (→ ⇒ ⟶ ➡)
+//                 are mirrored to left-pointing in RTL text, code excluded.
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {
-  const AC_RTL_RUN = () => {
-    if (!document.getElementById('autoclaw-rtl-fix')) {
-      const style = document.createElement('style');
-      style.id = 'autoclaw-rtl-fix';
-      style.innerHTML = "${fontFaceCss}body, html { direction: ltr !important; } pre, code, pre *, code *, .xterm, .xterm *, [class*='editor' i] *, [class*='monaco' i] *, .ant-dropdown *, .ant-select-dropdown *, .ant-cascader-dropdown * { direction: ltr !important; text-align: left !important; unicode-bidi: normal !important; } aside, nav, .ant-menu, .ant-layout-sider { direction: ltr !important; } p, h1, h2, h3, h4, h5, h6, li, blockquote, [dir='rtl'] { text-align: start !important; } .msg-user-text-bubble { text-align: start !important; } textarea, input { unicode-bidi: plaintext !important; text-align: start !important; } [dir='rtl'], [dir='rtl'] p, [dir='rtl'] li, [dir='rtl'] span, [dir='rtl'] h1, [dir='rtl'] h2, [dir='rtl'] h3, [dir='rtl'] h4, [dir='rtl'] h5, [dir='rtl'] h6, [dir='rtl'] blockquote, .msg-user-text-bubble, textarea, input { font-family: 'Vazirmatn Patched', Vazirmatn, Vazir, 'PingFang SC', -apple-system, 'Segoe UI', sans-serif !important; } ol[dir='rtl'], ul[dir='rtl'] { direction: rtl !important; padding-right: 40px !important; padding-left: 0 !important; margin-right: 10px !important; } ol[dir='rtl'] li, ul[dir='rtl'] li { direction: rtl !important; text-align: right !important; } table[dir='rtl'] { direction: rtl !important; text-align: right !important; }";
-      (document.head || document.documentElement).appendChild(style);
+  const RTL_CHARS = /[\\u0600-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF]/g;
+  const LTR_CHARS = /[A-Za-z]/g;
+  const countMatches = (text, re) => (text.match(re) || []).length;
+  const PROTECTED = 'pre, code, .xterm, .ant-dropdown, .ant-select-dropdown, .ant-cascader-dropdown, [class*="editor" i], [class*="monaco" i]';
+  const SETTLE_TARGETS = 'p, h1, h2, h3, h4, h5, h6, li, blockquote, span, ul, ol, table';
+  const BLOCK_TAGS = 'P, H1, H2, H3, H4, H5, H6, LI, BLOCKQUOTE, TD, TH, UL, OL, TABLE';
+
+  // Text of a container with code blocks excluded, so a Persian reply that is
+  // full of code still counts as Persian.
+  const collectText = (node, out) => {
+    for (const n of node.childNodes) {
+      if (n.nodeType === 3) out.push(n.nodeValue || '');
+      else if (n.nodeType === 1 && n.tagName !== 'PRE' && n.tagName !== 'CODE' && n.tagName !== 'KBD' && n.tagName !== 'SCRIPT' && n.tagName !== 'STYLE') collectText(n, out);
     }
-    const RTL_CHARS = /[\\u0600-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF]/g;
-    const LTR_CHARS = /[A-Za-z]/g;
-    const countMatches = (text, re) => (text.match(re) || []).length;
-    const PROTECTED = 'pre, code, .xterm, .ant-dropdown, .ant-select-dropdown, .ant-cascader-dropdown, [class*="editor" i], [class*="monaco" i]';
-    let scheduled = false;
-    // AutoClaw renders user chat text as a raw text node inside a div
-    // (.msg-user-text-bubble > div) — for divs only DIRECT text nodes count,
-    // so layout wrappers are never flipped.
-    const directTextCounts = (el) => {
+  };
+  const textExcludingCode = (root) => { const parts = []; collectText(root, parts); return parts.join(' '); };
+
+  // Mirror right-pointing arrows in RTL text (one-way only, so re-renders and
+  // repeated passes stay idempotent). Code blocks are left untouched.
+  const ARROW_CHARS = /[\\u2192\\u21D2\\u27F6\\u27A1]/;
+  const ARROW_GLOBAL = /[\\u2192\\u21D2\\u27F6\\u27A1]/g;
+  const ARROW_MAP = { '\\u2192': '\\u2190', '\\u21D2': '\\u21D0', '\\u27F6': '\\u27F5', '\\u27A1': '\\u2B05' };
+  const flipRtlArrows = (root) => {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => {
+      let p = n.parentElement;
+      while (p && p !== root) {
+        if (p.tagName === 'PRE' || p.tagName === 'CODE' || p.tagName === 'KBD') return NodeFilter.FILTER_REJECT;
+        p = p.parentElement;
+      }
+      return ARROW_CHARS.test(n.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    } });
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    for (const n of nodes) n.nodeValue = n.nodeValue.replace(ARROW_GLOBAL, (ch) => ARROW_MAP[ch]);
+  };
+
+  let streamTimer = null;
+  let settleTimer = null;
+  let streamTarget = null;
+
+  const fixInputs = () => {
+    document.querySelectorAll('textarea, input').forEach((el) => {
+      if (el.getAttribute('dir') !== 'auto') el.setAttribute('dir', 'auto');
+    });
+  };
+
+  // User chat bubbles render as raw text nodes inside a div — direct text
+  // nodes only, so layout wrappers never flip. Instant content, no churn.
+  const fixBubbles = () => {
+    document.querySelectorAll('.msg-user-text-bubble').forEach((el) => {
+      if (el.closest(PROTECTED)) return;
       let rtl = 0, ltr = 0;
       for (const n of el.childNodes) {
         if (n.nodeType === 3) {
@@ -349,39 +393,120 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           ltr += countMatches(value, LTR_CHARS);
         }
       }
-      return [rtl, ltr];
-    };
-    const scan = () => {
-      scheduled = false;
-      document.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, blockquote, span, ul, ol, table, div, textarea, input').forEach((el) => {
-        const tag = el.tagName;
-        if (tag === 'TEXTAREA' || tag === 'INPUT') {
-          if (el.getAttribute('dir') !== 'auto') el.setAttribute('dir', 'auto');
-          return;
+      if (rtl > ltr) {
+        if (el.getAttribute('dir') !== 'rtl') el.setAttribute('dir', 'rtl');
+        if (ARROW_CHARS.test(el.textContent || '')) flipRtlArrows(el);
+      } else if (el.getAttribute('dir') === 'rtl') {
+        el.removeAttribute('dir');
+      }
+    });
+  };
+
+  // The nearest enclosing text block of a mutation, or null.
+  const blockOf = (node) => {
+    let el = node && node.nodeType === 1 ? node : (node ? node.parentElement : null);
+    while (el && !BLOCK_TAGS.split(', ').includes(el.tagName)) el = el.parentElement;
+    return el;
+  };
+
+  // Common ancestor of a and b only if it sits at most maxDepth above a —
+  // this is the boundary that keeps the container inside one message.
+  const shallowAncestor = (a, b, maxDepth) => {
+    for (let i = 0, p = a.parentElement; p && i <= maxDepth; p = p.parentElement, i++) {
+      if (p === b || p.contains(b)) return p;
+    }
+    return null;
+  };
+
+  const trackMutation = (node) => {
+    const block = blockOf(node);
+    if (!block || block.closest(PROTECTED)) return;
+    if (!streamTarget) { streamTarget = block; return; }
+    if (streamTarget.contains(block) || block.contains(streamTarget)) {
+      if (block.contains(streamTarget)) streamTarget = block; // climb: React replaced the wrapper
+      return;
+    }
+    const anc = shallowAncestor(streamTarget, block, 2);
+    if (anc) streamTarget = anc; // sibling paragraph inside the same message
+    // else: mutation in a far-away region (scroll/virtualization) — ignored
+  };
+
+  const streamPass = () => {
+    streamTimer = null;
+    fixInputs();
+    fixBubbles();
+    // One sticky attribute on the streaming message's structural container.
+    if (streamTarget && streamTarget.isConnected && !streamTarget.closest(PROTECTED)) {
+      if (streamTarget.getAttribute('dir') !== 'rtl') {
+        const text = textExcludingCode(streamTarget);
+        const rtl = countMatches(text, RTL_CHARS);
+        const ltr = countMatches(text, LTR_CHARS);
+        if (rtl >= 3 && rtl > ltr) {
+          streamTarget.setAttribute('dir', 'rtl');
+          if (ARROW_CHARS.test(text)) flipRtlArrows(streamTarget);
         }
-        if (el.closest(PROTECTED)) return;
-        // Majority rule: a paragraph follows its dominant script, so
-        // "Claude Code این قابلیت را دارد" stays RTL and "use این tool" stays LTR.
-        let rtl, ltr;
-        if (tag === 'DIV') {
-          [rtl, ltr] = directTextCounts(el);
-        } else {
-          const text = el.textContent || '';
-          rtl = countMatches(text, RTL_CHARS);
-          ltr = countMatches(text, LTR_CHARS);
-        }
+      } else if (ARROW_CHARS.test(streamTarget.textContent || '')) {
+        flipRtlArrows(streamTarget);
+      }
+    }
+    scheduleSettle();
+  };
+
+  const settlePass = () => {
+    clearTimeout(settleTimer);
+    settleTimer = null;
+    streamTarget = null; // next stream rediscovers its own container
+    fixInputs();
+    fixBubbles();
+    // Per-paragraph polish: pure-English lines/headers go LTR even inside an
+    // RTL message; Persian-dominant paragraphs go RTL; mixed Latin-majority
+    // inherits the message direction. Sidebar rows: spans only.
+    document.querySelectorAll(SETTLE_TARGETS).forEach((el) => {
+      if (el.closest(PROTECTED)) return;
+      if (el.closest('aside, nav, .ant-menu, .ant-layout-sider') && el.tagName !== 'SPAN') return;
+      const text = el.textContent || '';
+      const rtl = countMatches(text, RTL_CHARS);
+      const ltr = countMatches(text, LTR_CHARS);
+      if (el.tagName === 'SPAN') {
         if (rtl > ltr) {
           if (el.getAttribute('dir') !== 'rtl') el.setAttribute('dir', 'rtl');
         } else if (el.getAttribute('dir') === 'rtl') {
           el.removeAttribute('dir');
         }
-      });
-    };
-    const observer = new MutationObserver(() => {
-      if (!scheduled) { scheduled = true; setTimeout(scan, 200); }
+      } else if (rtl === 0 && ltr > 0) {
+        if (el.getAttribute('dir') !== 'ltr') el.setAttribute('dir', 'ltr');
+      } else if (rtl > ltr) {
+        if (el.getAttribute('dir') !== 'rtl') el.setAttribute('dir', 'rtl');
+        if (ARROW_CHARS.test(text)) flipRtlArrows(el);
+      } else if (el.getAttribute('dir') === 'rtl' || el.getAttribute('dir') === 'ltr') {
+        el.removeAttribute('dir');
+      }
+    });
+  };
+
+  const scheduleSettle = () => {
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(settlePass, 800);
+  };
+
+  const AC_RTL_RUN = () => {
+    if (!document.getElementById('autoclaw-rtl-fix')) {
+      const style = document.createElement('style');
+      style.id = 'autoclaw-rtl-fix';
+      style.innerHTML = "${fontFaceCss}body, html { direction: ltr !important; } pre, code, pre *, code *, .xterm, .xterm *, [class*='editor' i] *, [class*='monaco' i] *, .ant-dropdown *, .ant-select-dropdown *, .ant-cascader-dropdown * { direction: ltr !important; text-align: left !important; unicode-bidi: normal !important; } aside, nav, .ant-menu, .ant-layout-sider { direction: ltr !important; } p, h1, h2, h3, h4, h5, h6, li, blockquote, [dir='rtl'] { text-align: start !important; } .msg-user-text-bubble { text-align: start !important; } textarea, input { unicode-bidi: plaintext !important; text-align: start !important; } [dir='rtl'], [dir='rtl'] p, [dir='rtl'] li, [dir='rtl'] span, [dir='rtl'] h1, [dir='rtl'] h2, [dir='rtl'] h3, [dir='rtl'] h4, [dir='rtl'] h5, [dir='rtl'] h6, [dir='rtl'] blockquote, .msg-user-text-bubble, textarea, input { font-family: 'Vazirmatn Patched', Vazirmatn, Vazir, 'PingFang SC', -apple-system, 'Segoe UI', sans-serif !important; } ol[dir='rtl'], ul[dir='rtl'], [dir='rtl'] ol, [dir='rtl'] ul { padding-right: 40px !important; padding-left: 0 !important; margin-right: 10px !important; } ol[dir='rtl'] li, ul[dir='rtl'] li, [dir='rtl'] ol li, [dir='rtl'] ul li { text-align: right !important; } table[dir='rtl'], [dir='rtl'] table { text-align: right !important; }";
+      (document.head || document.documentElement).appendChild(style);
+    }
+    const observer = new MutationObserver((records) => {
+      for (const r of records) {
+        trackMutation(r.target);
+        for (const added of r.addedNodes) trackMutation(added);
+      }
+      if (!streamTimer) streamTimer = setTimeout(streamPass, 150);
+      scheduleSettle();
     });
     observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
-    scan();
+    setInterval(settlePass, 60000);
+    settlePass();
   };
   if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', AC_RTL_RUN);
   else AC_RTL_RUN();
